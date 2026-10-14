@@ -40,27 +40,16 @@ class UploadAction extends AssetActionBuilder {
     return .new(
       icon: Icons.backup_outlined,
       label: context.t.upload_and_compress,
-      onAction: () => _upload(
-        context,
-        ref,
-        assets,
-        mode: mode ?? UploadCompressionMode.compressAndReplace,
-      ),
+      onAction: () => _upload(context, ref, assets, mode: mode ?? UploadCompressionMode.compressAndReplace),
       onSecondaryAction: () => _showUploadOptionsMenu(context, ref, assets),
     );
   }
 
-  Future<void> _showUploadOptionsMenu(
-    BuildContext context,
-    WidgetRef ref,
-    List<LocalAsset> assets,
-  ) async {
+  Future<void> _showUploadOptionsMenu(BuildContext context, WidgetRef ref, List<LocalAsset> assets) async {
     final selectedMode = await showModalBottomSheet<UploadCompressionMode>(
       context: context,
       backgroundColor: context.themeData.cardColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),

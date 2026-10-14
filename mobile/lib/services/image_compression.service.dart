@@ -12,37 +12,31 @@ final imageCompressionServiceProvider = Provider<ImageCompressionService>((ref) 
   return const ImageCompressionService();
 });
 
-typedef CompressAndGetFileFn = Future<XFile?> Function(
-  String path,
-  String targetPath, {
-  int minWidth,
-  int minHeight,
-  int inSampleSize,
-  int quality,
-  int rotate,
-  bool autoCorrectionAngle,
-  CompressFormat format,
-  bool keepExif,
-  int numberOfRetries,
-});
+typedef CompressAndGetFileFn =
+    Future<XFile?> Function(
+      String path,
+      String targetPath, {
+      int minWidth,
+      int minHeight,
+      int inSampleSize,
+      int quality,
+      int rotate,
+      bool autoCorrectionAngle,
+      CompressFormat format,
+      bool keepExif,
+      int numberOfRetries,
+    });
 
 class ImageCompressionService {
   static final _logger = Logger('ImageCompressionService');
   final CompressAndGetFileFn _compressAndGetFile;
   final Future<Directory> Function() _getTempDir;
 
-  const ImageCompressionService({
-    CompressAndGetFileFn? compressAndGetFile,
-    Future<Directory> Function()? getTempDir,
-  })  : _compressAndGetFile = compressAndGetFile ?? FlutterImageCompress.compressAndGetFile,
-        _getTempDir = getTempDir ?? getTemporaryDirectory;
+  const ImageCompressionService({CompressAndGetFileFn? compressAndGetFile, Future<Directory> Function()? getTempDir})
+    : _compressAndGetFile = compressAndGetFile ?? FlutterImageCompress.compressAndGetFile,
+      _getTempDir = getTempDir ?? getTemporaryDirectory;
 
-  Future<File?> compressImage({
-    required File file,
-    int quality = 80,
-    int? minWidth,
-    int? minHeight,
-  }) async {
+  Future<File?> compressImage({required File file, int quality = 80, int? minWidth, int? minHeight}) async {
     final tempDir = await _getTempDir();
     final uniqueId = DateTime.now().microsecondsSinceEpoch;
     final baseName = p.basenameWithoutExtension(file.path);
@@ -73,10 +67,7 @@ class ImageCompressionService {
 
   /// Replaces the local image on device external storage with the compressed image.
   /// Preserves the original file modification timestamp.
-  Future<File?> replaceLocalImage({
-    required File originalFile,
-    required File compressedFile,
-  }) async {
+  Future<File?> replaceLocalImage({required File originalFile, required File compressedFile}) async {
     try {
       if (!originalFile.existsSync()) {
         _logger.warning("Original file does not exist at ${originalFile.path}");

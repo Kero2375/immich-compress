@@ -136,27 +136,13 @@ class AdvancedSettings extends HookConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    RadioListTile<int>(
-                      title: Text(context.t.advanced_settings_background_backup_off),
-                      value: 0,
-                    ),
-                    RadioListTile<int>(
-                      title: Text(context.t.advanced_settings_background_backup_replace),
-                      value: 1,
-                    ),
-                    RadioListTile<int>(
-                      title: Text(context.t.advanced_settings_background_backup_keep),
-                      value: 2,
-                    ),
+                    RadioListTile<int>(title: Text(context.t.advanced_settings_background_backup_off), value: 0),
+                    RadioListTile<int>(title: Text(context.t.advanced_settings_background_backup_replace), value: 1),
+                    RadioListTile<int>(title: Text(context.t.advanced_settings_background_backup_keep), value: 2),
                   ],
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(context.t.cancel),
-                ),
-              ],
+              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text(context.t.cancel))],
             ),
           );
           if (selected != null) {

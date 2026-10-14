@@ -128,7 +128,10 @@ jobs:
         env:
           KEY_JKS: ${{ secrets.KEY_JKS }}
         working-directory: ./mobile
-        run: printf "%s" $KEY_JKS | base64 -d > android/key.jks
+        run: |
+          if [ -n "$KEY_JKS" ]; then
+            printf "%s" "$KEY_JKS" | base64 -d > android/key.jks
+          fi
 
       - name: Restore Gradle Cache
         id: cache-gradle-restore
@@ -226,7 +229,7 @@ jobs:
     permissions:
       contents: read
     # Run on main branch or workflow_dispatch, or on PRs/other branches (build only, no upload)
-    if: ${{ !github.event.pull_request.head.repo.fork && fromJSON(needs.pre-job.outputs.should_run).mobile == true }}
+    if: ${{ (github.repository_owner == 'immich-app' || github.event_name == 'workflow_dispatch') && fromJSON(needs.pre-job.outputs.should_run).mobile == true }}
     runs-on: macos-26
 
     steps:
