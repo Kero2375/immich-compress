@@ -1,0 +1,132 @@
+name: Release Mobile APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release (e.g. v1.0.0)'
+        required: false
+        default: ''
+      title:
+        description: 'Release title'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-apk:
+    name: Build and Release Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore Rust Cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.rustup/toolchains
+            ~/.rustup/update-hashes
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: build-mobile-rust-${{ runner.os }}-${{ hashFiles('native/crates/native_core_ffi/rust-toolchain.toml', 'native/Cargo.lock') }}
+          restore-keys: |
+            build-mobile-rust-${{ runner.os }}-
+
+      - name: Setup Mise
+        uses: immich-app/devtools/actions/use-mise@caac7f7e4298458a14238959504f411fc6cc7f06 # use-mise-action-v3.2.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          working_directory: ./mobile
+
+      - name: Restore Gradle Cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/sdk
+            mobile/android/.gradle
+          key: build-mobile-gradle-${{ runner.os }}-main
+          restore-keys: |
+            build-mobile-gradle-${{ runner.os }}-
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: ''
+
+      - name: Install dependencies
+        run: mise //mobile:install:ci
+
+      - name: Perform codegen
+        run: mise //mobile:codegen
+
+      - name: Build Android APK
+        working-directory: ./mobile
+        run: flutter build apk --release
+
+      - name: Prepare APK Asset
+        id: prepare
+        run: |
+          RAW_TAG="${{ inputs.tag_name || github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            TAG="v$(jq -r '.version' package.json)-compress"
+          else
+            TAG="$RAW_TAG"
+          fi
+          SRC="mobile/build/app/outputs/flutter-apk/app-release.apk"
+          DEST="mobile/build/app/outputs/flutter-apk/immich-compress-${TAG}.apk"
+          cp "$SRC" "$DEST"
+          echo "asset_path=${DEST}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: immich-compress-apk
+          path: ${{ steps.prepare.outputs.asset_path }}
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          ASSET: ${{ steps.prepare.outputs.asset_path }}
+          TITLE_INPUT: ${{ inputs.title }}
+          PRERELEASE: ${{ inputs.prerelease == true }}
+        run: |
+          TITLE="${TITLE_INPUT:-Immich Compress $TAG}"
+          PRERELEASE_ARG=""
+          if [ "$PRERELEASE" = "true" ]; then
+            PRERELEASE_ARG="--prerelease"
+          fi
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Uploading asset..."
+            gh release upload "$TAG" "$ASSET" --repo "$REPO" --clobber
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" "$ASSET" \
+              --repo "$REPO" \
+              --title "$TITLE" \
+              --generate-notes \
+              $PRERELEASE_ARG
+          fi
