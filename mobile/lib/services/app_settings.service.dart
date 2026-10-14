@@ -5,7 +5,11 @@ enum AppSettingsEnum<T> {
   advancedTroubleshooting<bool>(StoreKey.advancedTroubleshooting, false),
   manageLocalMediaAndroid<bool>(StoreKey.manageLocalMediaAndroid, false),
   enableHapticFeedback<bool>(StoreKey.enableHapticFeedback, true),
-  readonlyModeEnabled<bool>(StoreKey.readonlyModeEnabled, false);
+  readonlyModeEnabled<bool>(StoreKey.readonlyModeEnabled, false),
+  compressAndUploadQuality<int>(StoreKey.compressAndUploadQuality, 80),
+  showCompressAndUploadButton<bool>(StoreKey.showCompressAndUploadButton, true),
+  compressByDefault<bool>(StoreKey.compressByDefault, false),
+  compressBackgroundBackup<int>(StoreKey.compressBackgroundBackup, 0);
 
   const AppSettingsEnum(this.storeKey, this.defaultValue);
 

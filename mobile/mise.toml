@@ -89,7 +89,7 @@ dir = "../native/native_core"
 run = [
   "cargo build -p native_core_ffi",
   "flutter pub get",
-  "dart run ffigen --config ffigen.yaml",
+  "if command -v clang >/dev/null 2>&1; then dart run ffigen --config ffigen.yaml --compiler-opts=\"-I$(clang -print-resource-dir)/include\"; else dart run ffigen --config ffigen.yaml; fi",
 ]
 
 [tasks."codegen:pigeon"]

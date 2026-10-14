@@ -13,6 +13,7 @@ import 'package:immich_mobile/extensions/network_capability_extensions.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/infrastructure/repositories/backup.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/local_asset.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/storage.repository.dart';
 import 'package:immich_mobile/platform/connectivity_api.g.dart';
@@ -22,10 +23,13 @@ import 'package:immich_mobile/providers/infrastructure/platform.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/storage.provider.dart';
 import 'package:immich_mobile/repositories/asset_media.repository.dart';
 import 'package:immich_mobile/repositories/upload.repository.dart';
+import 'package:immich_mobile/services/image_compression.service.dart';
 import 'package:logging/logging.dart';
 import 'package:openapi/api.dart';
 import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart' show PMProgressHandler;
+
+enum UploadCompressionMode { original, compressAndReplace, compressAndKeep }
 
 /// Callbacks for upload progress and status updates
 class UploadCallbacks {
@@ -38,14 +42,17 @@ class UploadCallbacks {
 }
 
 final foregroundUploadServiceProvider = Provider((ref) {
+  final db = ref.watch(driftProvider);
   // ignore: dispose-provided-instances
   return ForegroundUploadService(
     ref.watch(uploadRepositoryProvider),
     ref.watch(storageRepositoryProvider),
-    ref.watch(driftProvider).backupRepository,
+    db.backupRepository,
     ref.watch(connectivityApiProvider),
     ref.watch(assetMediaRepositoryProvider),
     ref.watch(assetServiceProvider),
+    ref.watch(imageCompressionServiceProvider),
+    db.localAssetRepository,
   );
 });
 
@@ -61,8 +68,11 @@ class ForegroundUploadService {
     this._backupRepository,
     this._connectivityApi,
     this._assetMediaRepository,
-    this._assetService,
-  );
+    this._assetService, [
+    ImageCompressionService? imageCompressionService,
+    LocalAssetRepository? localAssetRepository,
+  ]) : _imageCompressionService = imageCompressionService ?? const ImageCompressionService(),
+       _localAssetRepository = localAssetRepository;
 
   final UploadRepository _uploadRepository;
   final StorageRepository _storageRepository;
@@ -70,6 +80,8 @@ class ForegroundUploadService {
   final ConnectivityApi _connectivityApi;
   final AssetMediaRepository _assetMediaRepository;
   final AssetService _assetService;
+  final ImageCompressionService _imageCompressionService;
+  final LocalAssetRepository? _localAssetRepository;
   final Logger _logger = Logger('ForegroundUploadService');
 
   bool shouldAbortUpload = false;
@@ -98,8 +110,21 @@ class ForegroundUploadService {
     final hasWifi = networkCapabilities.isUnmetered;
     _logger.info('Network capabilities: $networkCapabilities, hasWifi/isUnmetered: $hasWifi');
 
+    final backupCompressionModeInt = Store.get(StoreKey.compressBackgroundBackup, 0);
+    final compressionMode = switch (backupCompressionModeInt) {
+      1 => UploadCompressionMode.compressAndReplace,
+      2 => UploadCompressionMode.compressAndKeep,
+      _ => UploadCompressionMode.original,
+    };
+
     if (useSequentialUpload) {
-      await _uploadSequentially(items: candidates, cancelToken: cancelToken, hasWifi: hasWifi, callbacks: callbacks);
+      await _uploadSequentially(
+        items: candidates,
+        cancelToken: cancelToken,
+        hasWifi: hasWifi,
+        callbacks: callbacks,
+        compressionMode: compressionMode,
+      );
     } else {
       await _executeWithWorkerPool<LocalAsset>(
         items: candidates,
@@ -108,7 +133,8 @@ class ForegroundUploadService {
           final requireWifi = _shouldRequireWiFi(asset);
           return requireWifi && !hasWifi;
         },
-        processItem: (asset) => uploadSingleAsset(asset, cancelToken, callbacks: callbacks),
+        processItem: (asset) =>
+            uploadSingleAsset(asset, cancelToken, callbacks: callbacks, compressionMode: compressionMode),
       );
     }
   }
@@ -119,6 +145,7 @@ class ForegroundUploadService {
     required Completer<void> cancelToken,
     required bool hasWifi,
     required UploadCallbacks callbacks,
+    UploadCompressionMode compressionMode = UploadCompressionMode.original,
   }) async {
     await _storageRepository.clearCache();
     shouldAbortUpload = false;
@@ -134,7 +161,7 @@ class ForegroundUploadService {
         continue;
       }
 
-      await uploadSingleAsset(asset, cancelToken, callbacks: callbacks);
+      await uploadSingleAsset(asset, cancelToken, callbacks: callbacks, compressionMode: compressionMode);
     }
   }
 
@@ -143,6 +170,7 @@ class ForegroundUploadService {
     List<LocalAsset> localAssets, {
     Completer<void>? cancelToken,
     UploadCallbacks callbacks = const UploadCallbacks(),
+    UploadCompressionMode compressionMode = UploadCompressionMode.compressAndReplace,
   }) async {
     if (localAssets.isEmpty) {
       return;
@@ -151,7 +179,8 @@ class ForegroundUploadService {
     await _executeWithWorkerPool<LocalAsset>(
       items: localAssets,
       cancelToken: cancelToken,
-      processItem: (asset) => uploadSingleAsset(asset, cancelToken, callbacks: callbacks),
+      processItem: (asset) =>
+          uploadSingleAsset(asset, cancelToken, callbacks: callbacks, compressionMode: compressionMode),
     );
   }
 
@@ -246,13 +275,17 @@ class ForegroundUploadService {
     LocalAsset asset,
     Completer<void>? cancelToken, {
     required UploadCallbacks callbacks,
+    UploadCompressionMode compressionMode = UploadCompressionMode.original,
   }) async {
     final t = StaticTranslations.instance;
     final assetNotFoundOnDevice = CurrentPlatform.isAndroid
         ? t.asset_not_found_on_device_android
         : t.asset_not_found_on_device_ios;
     File? file;
+    File? originalFile;
+    File? compressedFile;
     File? livePhotoFile;
+    String? compressedChecksum;
 
     try {
       final remoteId = (await _assetService.getLocalAsset(asset.id))?.remoteId;
@@ -317,9 +350,37 @@ class ForegroundUploadService {
         return;
       }
 
+      originalFile = file;
+
+      final shouldCompress = compressionMode != UploadCompressionMode.original && asset.isImage;
+
+      if (shouldCompress) {
+        final quality = Store.get(StoreKey.compressAndUploadQuality, 80);
+        _logger.info("Compressing asset ${asset.id} before upload with quality $quality");
+        final compressed = await _imageCompressionService.compressImage(
+          file: file,
+          quality: quality,
+          minWidth: asset.width,
+          minHeight: asset.height,
+        );
+        if (compressed != null) {
+          compressedFile = compressed;
+          file = compressed;
+          try {
+            compressedChecksum = await _imageCompressionService.computeSha1(compressed);
+          } catch (e) {
+            _logger.warning("Failed to compute SHA1 for compressed file: $e");
+          }
+        } else {
+          _logger.warning("Compression failed for asset ${asset.id}, falling back to original");
+        }
+      }
+
       final fileName = await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
       // Some apps (e.g. DJI/Fusion) return names without an extension; fall back to the asset name for those.
-      final extension = p.extension(file.path).isNotEmpty ? p.extension(file.path) : p.extension(asset.name);
+      final extension = compressedFile != null
+          ? '.jpg'
+          : (p.extension(file.path).isNotEmpty ? p.extension(file.path) : p.extension(asset.name));
       final originalFileName = p.setExtension(fileName, extension);
       final deviceId = Store.get(StoreKey.deviceId);
 
@@ -390,6 +451,18 @@ class ForegroundUploadService {
 
       if (result.isSuccess && result.remoteAssetId != null) {
         await _handleUploadSuccess(asset, result.remoteAssetId!, callbacks);
+        if (compressedFile != null) {
+          if (compressionMode == UploadCompressionMode.compressAndReplace) {
+            await _imageCompressionService.replaceLocalImage(
+              originalFile: originalFile,
+              compressedFile: compressedFile,
+            );
+          }
+          if (compressedChecksum != null) {
+            await _localAssetRepository?.updateHashes({asset.id: compressedChecksum});
+          }
+        }
+        callbacks.onSuccess?.call(asset.localId!, result.remoteAssetId!);
       } else if (result.isCancelled) {
         shouldAbortUpload = true;
       } else if (result.errorMessage != null) {
@@ -408,9 +481,18 @@ class ForegroundUploadService {
       _logger.severe(() => "Error backup asset: $error", stackTrace);
       callbacks.onError?.call(asset.localId!, error.toString());
     } finally {
+      if (compressedFile != null) {
+        try {
+          if (compressedFile.existsSync()) {
+            await compressedFile.delete();
+          }
+        } catch (error, stackTrace) {
+          _logger.severe(() => "ERROR deleting compressed file: $error", stackTrace);
+        }
+      }
       if (Platform.isIOS) {
         try {
-          await file?.delete();
+          await originalFile?.delete();
           await livePhotoFile?.delete();
         } catch (error, stackTrace) {
           _logger.severe(() => "ERROR deleting file: $error", stackTrace);

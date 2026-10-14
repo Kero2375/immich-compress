@@ -41,6 +41,7 @@ dependencies:
   image_picker: ^1.2.3
   native_core:
     path: ../native/native_core
+  flutter_image_compress: ^2.3.0
   immich_ui:
     path: './packages/ui'
   intl: ^0.20.2

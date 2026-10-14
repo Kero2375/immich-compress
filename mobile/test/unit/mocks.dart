@@ -216,6 +216,7 @@ class ServiceMocks {
         any(),
         cancelToken: any(named: 'cancelToken'),
         callbacks: any(named: 'callbacks'),
+        compressionMode: any(named: 'compressionMode'),
       ),
     ).thenAnswer((_) async {});
   }
@@ -237,6 +238,7 @@ void _registerFallbacks() {
   registerFallbackValue(<RemoteAsset>[]);
   registerFallbackValue(<LocalAsset>[]);
   registerFallbackValue(ShareAssetType.original);
+  registerFallbackValue(UploadCompressionMode.original);
   registerFallbackValue(const UploadCallbacks());
   registerFallbackValue(_FakeBuildContext());
   registerFallbackValue(DevicePermissionStatus.granted);

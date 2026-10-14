@@ -12,6 +12,7 @@ import 'package:immich_mobile/infrastructure/repositories/settings.repository.da
 import 'package:immich_mobile/infrastructure/repositories/store.repository.dart';
 import 'package:immich_mobile/repositories/upload.repository.dart';
 import 'package:immich_mobile/services/foreground_upload.service.dart';
+import 'package:immich_mobile/services/image_compression.service.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../api.mocks.dart';
@@ -20,6 +21,8 @@ import '../infrastructure/repository.mock.dart';
 import '../mocks/asset_entity.mock.dart';
 import '../repository.mocks.dart';
 import '../service.mocks.dart';
+
+class MockImageCompressionService extends Mock implements ImageCompressionService {}
 
 void main() {
   late ForegroundUploadService sut;
@@ -258,6 +261,70 @@ void main() {
       verify(() => mockAssetService.stackEditedUpload(asset.localId!, 'remote', 'sha')).called(1);
       verifyZeroInteractions(mockStorageRepository);
       verifyZeroInteractions(mockUploadRepository);
+    });
+
+    test('compresses image when compress: true and deletes temp compressed file after upload', () async {
+      final mockImageCompressionService = MockImageCompressionService();
+      sut = ForegroundUploadService(
+        mockUploadRepository,
+        mockStorageRepository,
+        mockBackupRepository,
+        mockConnectivityApi,
+        mockAssetMediaRepository,
+        mockAssetService,
+        mockImageCompressionService,
+      );
+
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/test_compressed.jpg');
+      await tempFile.writeAsString('compressed data');
+
+      final asset = LocalAssetStub.image1;
+      final mockEntity = MockAssetEntity();
+      final originalFile = File('/path/to/IMG_5210.heic');
+
+      when(() => mockEntity.isLivePhoto).thenReturn(false);
+      when(() => mockStorageRepository.getAssetEntityForAsset(asset)).thenAnswer((_) async => mockEntity);
+      when(() => mockStorageRepository.isAssetAvailableLocally(asset.id)).thenAnswer((_) async => true);
+      when(() => mockStorageRepository.getFileForAsset(asset.id)).thenAnswer((_) async => originalFile);
+      when(() => mockAssetMediaRepository.getOriginalFilename(asset.id)).thenAnswer((_) async => 'IMG_5210.heic');
+
+      when(
+        () => mockImageCompressionService.compressImage(
+          file: originalFile,
+          quality: any(named: 'quality'),
+          minWidth: any(named: 'minWidth'),
+          minHeight: any(named: 'minHeight'),
+        ),
+      ).thenAnswer((_) async => tempFile);
+
+      File? uploadedFile;
+      String? uploadedName;
+      when(
+        () => mockUploadRepository.uploadFile(
+          file: any(named: 'file'),
+          originalFileName: any(named: 'originalFileName'),
+          fields: any(named: 'fields'),
+          cancelToken: any(named: 'cancelToken'),
+          onProgress: any(named: 'onProgress'),
+          logContext: any(named: 'logContext'),
+        ),
+      ).thenAnswer((invocation) async {
+        uploadedFile = invocation.namedArguments[#file] as File;
+        uploadedName = invocation.namedArguments[#originalFileName] as String;
+        return UploadResult.success(remoteAssetId: 'remote-1');
+      });
+
+      await sut.uploadSingleAsset(
+        asset,
+        null,
+        callbacks: const UploadCallbacks(),
+        compressionMode: UploadCompressionMode.compressAndReplace,
+      );
+
+      expect(uploadedFile?.path, tempFile.path);
+      expect(uploadedName, 'IMG_5210.jpg');
+      expect(tempFile.existsSync(), isFalse);
     });
   });
 }

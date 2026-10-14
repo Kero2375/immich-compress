@@ -19,6 +19,11 @@ enum StoreKey<T> {
   // Read-only Mode settings
   readonlyModeEnabled<bool>._(138),
 
+  compressAndUploadQuality<int>._(142),
+  showCompressAndUploadButton<bool>._(143),
+  compressByDefault<bool>._(144),
+  compressBackgroundBackup<int>._(145),
+
   syncMigrationStatus<String>._(1013),
 
   // Legacy keys that have been migrated to the new metadata store

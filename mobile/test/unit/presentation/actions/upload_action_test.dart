@@ -36,11 +36,16 @@ void main() {
     toastServiceProvider.overrideWithValue(context.service.toast),
   ];
 
-  Future<void> pumpUpload(WidgetTester tester, Set<BaseAsset> selection, {bool showProgress = false}) =>
+  Future<void> pumpUpload(
+    WidgetTester tester,
+    Set<BaseAsset> selection, {
+    bool showProgress = false,
+    UploadCompressionMode? mode,
+  }) =>
       tester.pumpTestWidget(
         context,
         ActionIconButton(
-          action: UploadAction(source: .timeline, showProgress: showProgress),
+          action: UploadAction(source: .timeline, showProgress: showProgress, mode: mode),
         ),
         overrides: [...context.selected(selection), ...uploadOverrides()],
       );
@@ -57,6 +62,7 @@ void main() {
         any(),
         cancelToken: any(named: 'cancelToken'),
         callbacks: any(named: 'callbacks'),
+        compressionMode: any(named: 'compressionMode'),
       ),
     ).thenAnswer((invocation) async {
       if (until != null) {
@@ -87,6 +93,7 @@ void main() {
                   captureAny(),
                   cancelToken: any(named: 'cancelToken'),
                   callbacks: any(named: 'callbacks'),
+                  compressionMode: any(named: 'compressionMode'),
                 ),
               ).captured.single
               as List<LocalAsset>;
@@ -107,6 +114,7 @@ void main() {
                   captureAny(),
                   cancelToken: any(named: 'cancelToken'),
                   callbacks: any(named: 'callbacks'),
+                  compressionMode: any(named: 'compressionMode'),
                 ),
               ).captured.single
               as List<LocalAsset>;
@@ -132,6 +140,7 @@ void main() {
           any(),
           cancelToken: any(named: 'cancelToken'),
           callbacks: any(named: 'callbacks'),
+          compressionMode: any(named: 'compressionMode'),
         ),
       ).thenAnswer((invocation) async {
         (invocation.namedArguments[#cancelToken] as Completer<void>).complete();
@@ -183,6 +192,87 @@ void main() {
       await pumpUpload(tester, {LocalAssetFactory.create(remoteId: 'already-there')});
 
       expect(find.byType(ImmichIconButton), findsNothing);
+    });
+
+    testWidgets('uploads with compressAndReplace mode by default', (tester) async {
+      final asset = LocalAssetFactory.create();
+      answerUploadWith(succeeded: {asset.id});
+
+      await pumpUpload(tester, {asset});
+      await tester.tap(find.byType(ImmichIconButton));
+      await settleUpload(tester);
+
+      verify(
+        () => uploadService.uploadManual(
+          any(),
+          cancelToken: any(named: 'cancelToken'),
+          callbacks: any(named: 'callbacks'),
+          compressionMode: UploadCompressionMode.compressAndReplace,
+        ),
+      ).called(1);
+    });
+
+    testWidgets('uploads with original mode when specified', (tester) async {
+      final asset = LocalAssetFactory.create();
+      answerUploadWith(succeeded: {asset.id});
+
+      await pumpUpload(tester, {asset}, mode: UploadCompressionMode.original);
+      await tester.tap(find.byType(ImmichIconButton));
+      await settleUpload(tester);
+
+      verify(
+        () => uploadService.uploadManual(
+          any(),
+          cancelToken: any(named: 'cancelToken'),
+          callbacks: any(named: 'callbacks'),
+          compressionMode: UploadCompressionMode.original,
+        ),
+      ).called(1);
+    });
+
+    testWidgets('uploads with compressAndKeep mode when specified', (tester) async {
+      final asset = LocalAssetFactory.create();
+      answerUploadWith(succeeded: {asset.id});
+
+      await pumpUpload(tester, {asset}, mode: UploadCompressionMode.compressAndKeep);
+      await tester.tap(find.byType(ImmichIconButton));
+      await settleUpload(tester);
+
+      verify(
+        () => uploadService.uploadManual(
+          any(),
+          cancelToken: any(named: 'cancelToken'),
+          callbacks: any(named: 'callbacks'),
+          compressionMode: UploadCompressionMode.compressAndKeep,
+        ),
+      ).called(1);
+    });
+
+    testWidgets('shows options modal on long press and uploads with selected option', (tester) async {
+      final asset = LocalAssetFactory.create();
+      answerUploadWith(succeeded: {asset.id});
+
+      await pumpUpload(tester, {asset});
+      await tester.longPress(find.byType(ImmichIconButton));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text(StaticTranslations.instance.upload_options), findsOneWidget);
+      expect(find.text(StaticTranslations.instance.upload_and_compress_replace), findsOneWidget);
+      expect(find.text(StaticTranslations.instance.upload_original), findsOneWidget);
+      expect(find.text(StaticTranslations.instance.upload_compressed_keep_original), findsOneWidget);
+
+      await tester.tap(find.text(StaticTranslations.instance.upload_original));
+      await settleUpload(tester);
+
+      verify(
+        () => uploadService.uploadManual(
+          any(),
+          cancelToken: any(named: 'cancelToken'),
+          callbacks: any(named: 'callbacks'),
+          compressionMode: UploadCompressionMode.original,
+        ),
+      ).called(1);
     });
   });
 

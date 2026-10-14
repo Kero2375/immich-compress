@@ -36,6 +36,8 @@ class AdvancedSettings extends HookConsumerWidget {
       (_, _) => unawaited(ref.read(settingsProvider).write(.imagePreferRemote, preferRemote.value)),
     );
     final readonlyModeEnabled = useAppSettingsState(AppSettingsEnum.readonlyModeEnabled);
+    final compressQuality = useAppSettingsState(AppSettingsEnum.compressAndUploadQuality);
+    final compressBackgroundBackup = useAppSettingsState(AppSettingsEnum.compressBackgroundBackup);
 
     final logLevel = Level.LEVELS[levelId.value].name;
 
@@ -113,6 +115,62 @@ class AdvancedSettings extends HookConsumerWidget {
         valueNotifier: preferRemote,
         title: context.t.advanced_settings_prefer_remote_title,
         subtitle: context.t.advanced_settings_prefer_remote_subtitle,
+      ),
+      SettingListTile(
+        title: context.t.advanced_settings_compress_background_backup,
+        subtitle: switch (compressBackgroundBackup.value) {
+          1 => context.t.advanced_settings_background_backup_replace,
+          2 => context.t.advanced_settings_background_backup_keep,
+          _ => context.t.advanced_settings_background_backup_off,
+        },
+        trailing: const Icon(Icons.arrow_drop_down),
+        onTap: () async {
+          final selected = await showDialog<int>(
+            context: context,
+            builder: (BuildContext ctx) => AlertDialog(
+              title: Text(context.t.advanced_settings_compress_background_backup),
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              content: RadioGroup<int>(
+                groupValue: compressBackgroundBackup.value,
+                onChanged: (val) => Navigator.pop(ctx, val),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RadioListTile<int>(
+                      title: Text(context.t.advanced_settings_background_backup_off),
+                      value: 0,
+                    ),
+                    RadioListTile<int>(
+                      title: Text(context.t.advanced_settings_background_backup_replace),
+                      value: 1,
+                    ),
+                    RadioListTile<int>(
+                      title: Text(context.t.advanced_settings_background_backup_keep),
+                      value: 2,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(context.t.cancel),
+                ),
+              ],
+            ),
+          );
+          if (selected != null) {
+            compressBackgroundBackup.value = selected;
+          }
+        },
+      ),
+      SettingsSliderListTile(
+        text: "${context.t.advanced_settings_compress_and_upload_quality}: ${compressQuality.value}%",
+        valueNotifier: compressQuality,
+        maxValue: 100,
+        minValue: 10,
+        noDivisons: 90,
+        label: "${compressQuality.value}%",
       ),
       const CustomProxyHeaderSettings(),
       const SslClientCertSettings(),

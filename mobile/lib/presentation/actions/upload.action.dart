@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/enums.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
+import 'package:immich_mobile/extensions/build_context_extensions.dart';
 import 'package:immich_mobile/generated/translations.g.dart';
 import 'package:immich_mobile/presentation/actions/action.dart';
 import 'package:immich_mobile/providers/backup/asset_upload_progress.provider.dart';
@@ -20,8 +21,14 @@ final _stateProvider = Provider.family.autoDispose<List<LocalAsset>?, ActionSour
 
 class UploadAction extends AssetActionBuilder {
   final bool showProgress;
+  final UploadCompressionMode? mode;
 
-  const UploadAction({required super.source, this.showProgress = false});
+  const UploadAction({
+    required super.source,
+    this.showProgress = false,
+    this.mode,
+    @Deprecated('Use mode instead') bool? compress,
+  });
 
   @override
   ActionItem? create(BuildContext context, WidgetRef ref) {
@@ -30,13 +37,86 @@ class UploadAction extends AssetActionBuilder {
       return null;
     }
 
-    return .new(icon: Icons.backup_outlined, label: context.t.upload, onAction: () => _upload(context, ref, assets));
+    return .new(
+      icon: Icons.backup_outlined,
+      label: context.t.upload_and_compress,
+      onAction: () => _upload(
+        context,
+        ref,
+        assets,
+        mode: mode ?? UploadCompressionMode.compressAndReplace,
+      ),
+      onSecondaryAction: () => _showUploadOptionsMenu(context, ref, assets),
+    );
   }
 
-  Future<void> _upload(BuildContext context, WidgetRef ref, List<LocalAsset> assets) async {
+  Future<void> _showUploadOptionsMenu(
+    BuildContext context,
+    WidgetRef ref,
+    List<LocalAsset> assets,
+  ) async {
+    final selectedMode = await showModalBottomSheet<UploadCompressionMode>(
+      context: context,
+      backgroundColor: context.themeData.cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                child: Row(
+                  children: [
+                    Text(
+                      ctx.t.upload_options,
+                      style: ctx.themeData.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.compress),
+                title: Text(ctx.t.upload_and_compress_replace),
+                subtitle: Text(ctx.t.upload_and_compress_replace_desc),
+                onTap: () => Navigator.of(ctx).pop(UploadCompressionMode.compressAndReplace),
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_upload_outlined),
+                title: Text(ctx.t.upload_original),
+                subtitle: Text(ctx.t.upload_original_desc),
+                onTap: () => Navigator.of(ctx).pop(UploadCompressionMode.original),
+              ),
+              ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: Text(ctx.t.upload_compressed_keep_original),
+                subtitle: Text(ctx.t.upload_compressed_keep_original_desc),
+                onTap: () => Navigator.of(ctx).pop(UploadCompressionMode.compressAndKeep),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (selectedMode != null && context.mounted) {
+      await _upload(context, ref, assets, mode: selectedMode);
+    }
+  }
+
+  Future<void> _upload(
+    BuildContext context,
+    WidgetRef ref,
+    List<LocalAsset> assets, {
+    UploadCompressionMode mode = UploadCompressionMode.compressAndReplace,
+  }) async {
     try {
       if (!showProgress) {
-        await uploadAssets(context, ref, assets);
+        await uploadAssets(context, ref, assets, mode: mode);
         return;
       }
 
@@ -51,7 +131,7 @@ class UploadAction extends AssetActionBuilder {
         ).whenComplete(() => isDialogOpen = false),
       );
 
-      await uploadAssets(context, ref, assets);
+      await uploadAssets(context, ref, assets, mode: mode);
 
       if (isDialogOpen && context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -63,7 +143,16 @@ class UploadAction extends AssetActionBuilder {
 }
 
 @visibleForTesting
-Future<void> uploadAssets(BuildContext context, WidgetRef ref, List<LocalAsset> assets) async {
+Future<void> uploadAssets(
+  BuildContext context,
+  WidgetRef ref,
+  List<LocalAsset> assets, {
+  UploadCompressionMode mode = UploadCompressionMode.compressAndReplace,
+  @Deprecated('Use mode instead') bool? compress,
+}) async {
+  final effectiveMode = compress != null
+      ? (compress ? UploadCompressionMode.compressAndReplace : UploadCompressionMode.original)
+      : mode;
   final progress = ref.read(assetUploadProgressProvider.notifier);
   final uploads = ref.read(foregroundUploadServiceProvider);
   final toastService = ref.read(toastServiceProvider);
@@ -93,6 +182,7 @@ Future<void> uploadAssets(BuildContext context, WidgetRef ref, List<LocalAsset> 
           progress.setError(id);
         },
       ),
+      compressionMode: effectiveMode,
     );
   } finally {
     ref.read(manualUploadCancelTokenProvider.notifier).state = null;
